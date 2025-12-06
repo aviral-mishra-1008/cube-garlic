@@ -13,7 +13,7 @@ const COLORS = [
   { name: 'Purple', value: '#800080' },
 ]
 
-// Face definitions with initial transforms
+// Face definitions with initial 3D transforms
 // 0: Front, 1: Back, 2: Right, 3: Left, 4: Top, 5: Bottom
 const FACES = [
   { id: 0, name: 'Front', pos: [0, 0, 1.25], rot: [0, 0, 0], textRot: [0, 0, 0], text: '1' },
@@ -25,9 +25,6 @@ const FACES = [
 ]
 
 // Adjacency Graph
-// [Top, Bottom, Left, Right] (relative to the face's UV)
-// Each entry: { face: ID, edge: EdgeIndexOnNeighbor }
-// Edge Indices: 0=Top, 1=Bottom, 2=Left, 3=Right
 const CUBE_ADJACENCY = {
   0: [ // Front
     { face: 4, edge: 1 }, // Top -> Top Face (Bottom Edge)
@@ -38,7 +35,7 @@ const CUBE_ADJACENCY = {
   1: [ // Back
     { face: 4, edge: 0 }, // Top -> Top Face (Top Edge)
     { face: 5, edge: 1 }, // Bottom -> Bottom Face (Bottom Edge)
-    { face: 2, edge: 3 }, // Left -> Right Face (Right Edge) - Viewed from back, Left is Right Face
+    { face: 2, edge: 3 }, // Left -> Right Face (Right Edge)
     { face: 3, edge: 2 }  // Right -> Left Face (Left Edge)
   ],
   2: [ // Right
@@ -69,17 +66,18 @@ const CUBE_ADJACENCY = {
 
 function HingeButton({ position, rotation, onClick }) {
   const [hovered, setHovered] = useState(false)
+  
   return (
     <group position={position} rotation={rotation}>
       <mesh 
-        position={[0, 0, 0.02]}
+        position={[0, 0, 0.1]} 
         onClick={(e) => { e.stopPropagation(); onClick() }}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
-        <circleGeometry args={[0.3, 32]} />
-        <meshBasicMaterial color={hovered ? "#00bcd4" : "#ffffff"} transparent opacity={0.8} side={THREE.DoubleSide} />
-        <Text position={[0, 0, 0.01]} fontSize={0.3} color="black" anchorX="center" anchorY="middle">+</Text>
+        <circleGeometry args={[0.4, 32]} />
+        <meshBasicMaterial color={hovered ? "#00ffff" : "#00bcd4"} side={THREE.DoubleSide} />
+        <Text position={[0, 0, 0.01]} fontSize={0.5} color="black" anchorX="center" anchorY="middle" fontWeight="bold">+</Text>
       </mesh>
     </group>
   )
@@ -93,9 +91,11 @@ function FaceMesh({
   onPointerMove, 
   onPointerUp,
   onUnfoldNeighbor,
-  availableNeighbors
+  availableNeighbors,
+  mode
 }) {
   const meshRef = useRef()
+  const FACE_SIZE = 2.5
   
   useFrame(() => {
     if (!meshRef.current) return
@@ -103,10 +103,9 @@ function FaceMesh({
     let targetPos, targetRot
 
     if (unfoldedState) {
-      // Unfolded position (2D grid)
-      // Grid unit is 2.5 (face size) + gap? Let's use 2.6 for slight gap or 2.5 for tight
-      const SIZE = 2.5
-      targetPos = new THREE.Vector3(unfoldedState.x * SIZE, unfoldedState.y * SIZE, 0)
+      // Unfolded position (2D grid). We use a gap of 2.6 for visibility
+      const GRID_STEP = 2.55 
+      targetPos = new THREE.Vector3(unfoldedState.x * GRID_STEP, unfoldedState.y * GRID_STEP, 0)
       targetRot = new THREE.Euler(0, 0, unfoldedState.rot)
     } else {
       // Folded position (3D cube)
@@ -114,22 +113,24 @@ function FaceMesh({
       targetRot = new THREE.Euler(...face.rot)
     }
 
-    // Lerp for animation
+    // Smooth animation
     meshRef.current.position.lerp(targetPos, 0.1)
     
-    // Slerp for rotation
+    // Quaternion slerp for smooth rotation
     const targetQ = new THREE.Quaternion().setFromEuler(targetRot)
     meshRef.current.quaternion.slerp(targetQ, 0.1)
   })
 
-  // Calculate hinge button positions
-  // 0: Top (0, 1.25), 1: Bottom (0, -1.25), 2: Left (-1.25, 0), 3: Right (1.25, 0)
+  // Hinge positions relative to the face center (UV space)
   const hingePositions = [
-    [0, 1.25, 0],
-    [0, -1.25, 0],
-    [-1.25, 0, 0],
-    [1.25, 0, 0]
+    [0, 1.25, 0],   // 0: Top
+    [0, -1.25, 0],  // 1: Bottom
+    [-1.25, 0, 0],  // 2: Left
+    [1.25, 0, 0]    // 3: Right
   ]
+
+  // Hover effect for the face itself
+  const [faceHovered, setFaceHovered] = useState(false)
 
   return (
     <group>
@@ -139,30 +140,35 @@ function FaceMesh({
         onPointerDown={(e) => onPointerDown(e, face.id)}
         onPointerMove={(e) => onPointerMove(e, face.id)}
         onPointerUp={(e) => onPointerUp(e, face.id)}
+        onPointerOver={() => setFaceHovered(true)}
+        onPointerOut={() => setFaceHovered(false)}
       >
-        <planeGeometry args={[2.5, 2.5]} />
-        <Edges 
-          linewidth={4} 
-          scale={1.0} 
-          threshold={15} 
-          color="black" 
-          raycast={() => null}
-        />
+        <planeGeometry args={[FACE_SIZE, FACE_SIZE]} />
+        <Edges linewidth={2} color={faceHovered && mode === 'open' && !unfoldedState ? "#00ffff" : "#333"} />
+        
+        {/* Selection Highlight for Open Mode (Anchor suggestion) */}
+        {faceHovered && mode === 'open' && !unfoldedState && (
+           <mesh position={[0,0,-0.01]}>
+              <planeGeometry args={[FACE_SIZE * 1.05, FACE_SIZE * 1.05]} />
+              <meshBasicMaterial color="#00ffff" transparent opacity={0.3} />
+           </mesh>
+        )}
+
         <Text 
           position={[0, 0, 0.01]} 
           rotation={face.textRot} 
-          fontSize={1.5} 
+          fontSize={1.2} 
           color="black" 
           anchorX="center" 
-          anchorY="middle" 
-          raycast={() => null}
+          anchorY="middle"
         >
           {face.text}
         </Text>
 
-        {/* Hinge Buttons - Only show if unfolded and neighbor is available */}
-        {unfoldedState && availableNeighbors && availableNeighbors.map((neighbor, idx) => {
-          if (!neighbor) return null
+        {/* Render Hinges for Unfolded Neighbors */}
+        {unfoldedState && availableNeighbors && availableNeighbors.map((conn, idx) => {
+          if (!conn) return null // Neighbor already unfolded or invalid
+          
           return (
             <HingeButton 
               key={idx} 
@@ -177,20 +183,27 @@ function FaceMesh({
   )
 }
 
-function UnfoldingCube({ mode, color, tool }) {
+function UnfoldingCube({ mode, color, tool, resetTrigger }) {
   // unfoldedFaces: Map<faceId, { x, y, rot }>
   const [unfoldedFaces, setUnfoldedFaces] = useState({})
   
+  // Drawing state
   const [drawingState, setDrawingState] = useState({ 
     isDrawing: false, 
     startUV: null, 
     lastUV: null,
     faceIndex: null,
     startPoint: null,
-    currentPoint: null
+    currentPoint: null,
+    isValidHover: false // Track if we are hovering the correct face
   })
+
+  // Reset when trigger changes
+  useEffect(() => {
+    setUnfoldedFaces({})
+  }, [resetTrigger])
   
-  // Create 6 canvases and textures
+  // Create canvases for drawing (persistent across renders)
   const { canvases, textures, materials } = useMemo(() => {
     const canvases = []
     const textures = []
@@ -201,7 +214,7 @@ function UnfoldingCube({ mode, color, tool }) {
       canvas.width = 512
       canvas.height = 512
       const ctx = canvas.getContext('2d')
-      ctx.fillStyle = '#d2b48c'
+      ctx.fillStyle = '#e0e0e0' // Light grey paper color
       ctx.fillRect(0, 0, 512, 512)
       
       const texture = new THREE.CanvasTexture(canvas)
@@ -212,122 +225,77 @@ function UnfoldingCube({ mode, color, tool }) {
       
       materials.push(new THREE.MeshStandardMaterial({
         map: texture,
-        roughness: 0.5,
-        metalness: 0.0,
+        roughness: 0.6,
+        metalness: 0.1,
         side: THREE.DoubleSide 
       }))
     }
-    
     return { canvases, textures, materials }
   }, [])
 
   const handlePointerDown = (e, faceIndex) => {
     e.stopPropagation()
     
+    // Mode: Open - Logic for Anchoring the Net
     if (mode === 'open') {
-      // If clicking a folded face, start unfolding from there (reset)
-      if (!unfoldedFaces[faceIndex]) {
+      if (Object.keys(unfoldedFaces).length === 0) {
         setUnfoldedFaces({ [faceIndex]: { x: 0, y: 0, rot: 0 } })
-      } else {
-        // If clicking an unfolded face (Anchor?), maybe refold?
-        // For now, let's just keep it simple. Click outside to reset?
-        // Or click the anchor to reset.
-        if (unfoldedFaces[faceIndex].x === 0 && unfoldedFaces[faceIndex].y === 0) {
-           setUnfoldedFaces({}) // Reset
-        }
       }
       return
     }
 
-    if (mode !== 'draw') return
-    
-    setDrawingState({
-      isDrawing: true,
-      startUV: e.uv.clone(),
-      lastUV: e.uv.clone(),
-      faceIndex: faceIndex,
-      startPoint: e.point.clone(),
-      currentPoint: e.point.clone()
-    })
+    // Mode: Draw
+    if (mode === 'draw') {
+      setDrawingState({
+        isDrawing: true,
+        startUV: e.uv.clone(),
+        lastUV: e.uv.clone(),
+        faceIndex: faceIndex,
+        startPoint: e.point.clone(),
+        currentPoint: e.point.clone(),
+        isValidHover: true
+      })
+    }
   }
 
+  // The Core Logic: Calculating where a neighbor should land on the 2D grid
   const handleUnfoldNeighbor = (parentFaceId, edgeIdx) => {
     const parentState = unfoldedFaces[parentFaceId]
     const connection = CUBE_ADJACENCY[parentFaceId][edgeIdx]
     const neighborId = connection.face
-    
-    // Calculate new position and rotation
-    // edgeIdx: 0=Top, 1=Bottom, 2=Left, 3=Right (relative to parent)
-    
-    // We need to account for parent's current rotation in the grid
-    // 0 rad = Up is Up.
-    // If parent is rotated 90 deg (PI/2), its "Top" is visually Left.
-    
-    // Convert rotation to discrete steps (0, 1, 2, 3) representing 0, 90, 180, 270
-    const rotSteps = Math.round(parentState.rot / (Math.PI / 2)) % 4
-    
-    // Adjust edgeIdx by rotation to get "Visual Direction" in grid
-    // If rot is 90 (1 step), Top(0) becomes Left(2).
-    // Mapping: 0->2, 1->3, 2->1, 3->0 ? No.
-    // Rot +90 (CCW):
-    // Top (0,1) -> Left (-1,0).
-    // Left (-1,0) -> Bottom (0,-1).
-    // Bottom (0,-1) -> Right (1,0).
-    // Right (1,0) -> Top (0,1).
-    
-    // Let's use vectors for grid movement
-    const moves = [
+    const neighborEntryEdge = connection.edge
+
+    // 1. Determine Grid Move Vector
+    const localVectors = [
       { x: 0, y: 1 },  // 0: Top
       { x: 0, y: -1 }, // 1: Bottom
       { x: -1, y: 0 }, // 2: Left
       { x: 1, y: 0 }   // 3: Right
     ]
     
-    // Apply rotation to the move vector
-    const move = moves[edgeIdx]
-    const cos = Math.round(Math.cos(parentState.rot))
-    const sin = Math.round(Math.sin(parentState.rot))
-    const dx = move.x * cos - move.y * sin
-    const dy = move.x * sin + move.y * cos
+    const parentRot = parentState.rot
+    const exitVectorLocal = localVectors[edgeIdx]
+
+    // Rotate local vector by parent's current rotation to get Global Grid Move
+    const cos = Math.cos(parentRot)
+    const sin = Math.sin(parentRot)
+    const gridMoveX = Math.round(exitVectorLocal.x * cos - exitVectorLocal.y * sin)
+    const gridMoveY = Math.round(exitVectorLocal.x * sin + exitVectorLocal.y * cos)
+
+    // New Grid Position
+    const newX = parentState.x + gridMoveX
+    const newY = parentState.y + gridMoveY
+
+    // 2. Determine New Rotation
+    const entryVectorLocal = localVectors[neighborEntryEdge]
+    const entryAngleLocal = Math.atan2(entryVectorLocal.y, entryVectorLocal.x)
+    const targetAngleGlobal = Math.atan2(-gridMoveY, -gridMoveX)
     
-    const newX = parentState.x + dx
-    const newY = parentState.y + dy
-    
-    // Calculate new rotation
-    // We need the neighbor's "entry edge" to align with parent's "exit edge"
-    // Exit edge is edgeIdx.
-    // Entry edge is connection.edge.
-    // Standard alignment: If I exit Top, I enter Bottom.
-    // If I exit Top (0), and enter Bottom (1), rotation is 0.
-    // If I exit Top (0), and enter Left (2), rotation must change.
-    
-    // Let's define "Standard Entry" for each Exit:
-    // Exit 0 (Top) -> Expect Entry 1 (Bottom)
-    // Exit 1 (Bottom) -> Expect Entry 0 (Top)
-    // Exit 2 (Left) -> Expect Entry 3 (Right)
-    // Exit 3 (Right) -> Expect Entry 2 (Left)
-    
-    const expectedEntry = { 0: 1, 1: 0, 2: 3, 3: 2 }
-    const actualEntry = connection.edge
-    
-    // Calculate rotation diff
-    // 0=Top, 2=Left, 1=Bottom, 3=Right (CCW order: 3, 0, 2, 1... wait)
-    // Let's use standard angle: 0=Top, 1=Left, 2=Bottom, 3=Right (CCW)
-    // My edgeIdx: 0=Top, 2=Left, 1=Bottom, 3=Right.
-    // Let's map edgeIdx to Angle Index:
-    const edgeToAngle = { 0: 0, 2: 1, 1: 2, 3: 3 } // 0->90->180->270
-    
-    const exitAngle = edgeToAngle[edgeIdx]
-    const entryAngle = edgeToAngle[actualEntry]
-    const expectedEntryAngle = edgeToAngle[expectedEntry[edgeIdx]]
-    
-    // The rotation needed is the difference between expected entry and actual entry
-    // If I expect Bottom (2) but get Left (1), I need to rotate neighbor so Left becomes Bottom.
-    // Rotate +90 (1 step).
-    
-    const rotDiff = (expectedEntryAngle - entryAngle) * (Math.PI / 2)
-    const newRot = parentState.rot + rotDiff
-    
+    let newRot = targetAngleGlobal - entryAngleLocal
+
+    const PI_2 = Math.PI / 2
+    newRot = Math.round(newRot / PI_2) * PI_2
+
     setUnfoldedFaces(prev => ({
       ...prev,
       [neighborId]: { x: newX, y: newY, rot: newRot }
@@ -337,9 +305,17 @@ function UnfoldingCube({ mode, color, tool }) {
   const handlePointerMove = (e, faceIndex) => {
     if (mode === 'draw' && drawingState.isDrawing) {
       e.stopPropagation()
-      
+
+      // Line Restriction Logic:
+      // Only draw/erase if we are still on the SAME face we started on
+      if (faceIndex !== drawingState.faceIndex) {
+         setDrawingState(prev => ({ ...prev, isValidHover: false }))
+         return
+      }
+
+      // If we are on the correct face, proceed
       if (tool === 'eraser') {
-         if (faceIndex === drawingState.faceIndex && e.uv) {
+         if (e.uv) {
              const canvas = canvases[faceIndex]
              const ctx = canvas.getContext('2d')
              const texture = textures[faceIndex]
@@ -353,8 +329,8 @@ function UnfoldingCube({ mode, color, tool }) {
              ctx.moveTo(startX, startY)
              ctx.lineTo(endX, endY)
              ctx.lineCap = 'round'
-             ctx.lineWidth = 30
-             ctx.strokeStyle = '#d2b48c'
+             ctx.lineWidth = 50 // Slightly thicker for eraser
+             ctx.strokeStyle = '#e0e0e0' // Paint over with paper color
              ctx.stroke()
              
              texture.needsUpdate = true
@@ -362,13 +338,16 @@ function UnfoldingCube({ mode, color, tool }) {
              setDrawingState(prev => ({
                  ...prev,
                  lastUV: e.uv.clone(),
-                 currentPoint: e.point.clone()
+                 currentPoint: e.point.clone(),
+                 isValidHover: true
              }))
          }
       } else {
+          // Pen tool: Just update current point for preview
           setDrawingState(prev => ({
             ...prev,
-            currentPoint: e.point.clone()
+            currentPoint: e.point.clone(),
+            isValidHover: true
           }))
       }
     }
@@ -381,6 +360,7 @@ function UnfoldingCube({ mode, color, tool }) {
     if (tool === 'pen') {
         const endUV = e.uv
         
+        // Only commit the line if we ended on the same face we started
         if (faceIndex === drawingState.faceIndex && endUV) {
           const canvas = canvases[faceIndex]
           const ctx = canvas.getContext('2d')
@@ -395,10 +375,10 @@ function UnfoldingCube({ mode, color, tool }) {
           ctx.moveTo(startX, startY)
           ctx.lineTo(endX, endY)
           ctx.lineCap = 'round'
-          ctx.lineWidth = 8
+          ctx.lineWidth = 10
           ctx.strokeStyle = color
-          
           ctx.stroke()
+          
           texture.needsUpdate = true
         }
     }
@@ -409,7 +389,8 @@ function UnfoldingCube({ mode, color, tool }) {
       lastUV: null,
       faceIndex: null,
       startPoint: null,
-      currentPoint: null
+      currentPoint: null,
+      isValidHover: false
     })
   }
 
@@ -418,11 +399,9 @@ function UnfoldingCube({ mode, color, tool }) {
       {FACES.map((face) => {
         const isUnfolded = !!unfoldedFaces[face.id]
         
-        // Determine available neighbors for hinge buttons
         let availableNeighbors = null
         if (isUnfolded && mode === 'open') {
           availableNeighbors = CUBE_ADJACENCY[face.id].map(conn => {
-            // If neighbor is already unfolded, don't show button
             if (unfoldedFaces[conn.face]) return null
             return conn
           })
@@ -439,12 +418,13 @@ function UnfoldingCube({ mode, color, tool }) {
             onPointerUp={handlePointerUp}
             onUnfoldNeighbor={handleUnfoldNeighbor}
             availableNeighbors={availableNeighbors}
+            mode={mode}
           />
         )
       })}
 
-      {/* Preview Line - Only for Pen tool */}
-      {drawingState.isDrawing && drawingState.startPoint && drawingState.currentPoint && tool === 'pen' && (
+      {/* Preview Line - Only render if isValidHover is true (we are on the correct face) */}
+      {drawingState.isDrawing && drawingState.startPoint && drawingState.currentPoint && drawingState.isValidHover && tool === 'pen' && (
         <Line 
           points={[drawingState.startPoint, drawingState.currentPoint]} 
           color={color} 
@@ -459,6 +439,7 @@ function App() {
   const [mode, setMode] = useState('view') // 'view', 'draw', 'open'
   const [color, setColor] = useState('#000000')
   const [tool, setTool] = useState('pen') // 'pen' or 'eraser'
+  const [resetCount, setResetCount] = useState(0) // Used to trigger reset
 
   const getCursorClass = () => {
     if (mode === 'open') return 'cursor-open'
@@ -469,7 +450,7 @@ function App() {
 
   return (
     <div className={`canvas-container ${getCursorClass()}`}>
-      <h1 className="title-text">Code of The Day</h1>
+      <h1 className="title-text">Code of the Day 2025</h1>
       
       <div className="palette">
         <div className="palette-section">
@@ -530,16 +511,42 @@ function App() {
             </div>
           </>
         )}
+
+        {mode === 'open' && (
+           <div className="palette-section">
+             <span className="palette-label">Actions</span>
+             <button 
+                className="tool-btn"
+                style={{background: '#ff5722'}}
+                onClick={() => setResetCount(c => c + 1)}
+              >
+                ↻ Reset Net
+              </button>
+              <p style={{fontSize: '0.8rem', color: '#aaa', marginTop: '5px'}}>
+                1. Click a face to anchor it.<br/>
+                2. Click "+" to peel neighbors.
+              </p>
+           </div>
+        )}
       </div>
 
-      <div className="footer-text">Made with ❤️ by team CC</div>
+      <div 
+        className="footer-text" 
+        style={{
+          left: 'auto',
+          right: '20px',
+          bottom: '20px'
+        }}
+      >
+        Made with ❤️ by Team CC
+      </div>
       
-      <Canvas camera={{ position: [5, 5, 5], fov: 50 }}>
+      <Canvas camera={{ position: [6, 6, 6], fov: 45 }}>
         <ambientLight intensity={0.7} />
         <pointLight position={[10, 10, 10]} intensity={1} />
         <pointLight position={[-10, -10, -10]} intensity={0.5} />
-        <UnfoldingCube mode={mode} color={color} tool={tool} />
-        <OrbitControls enabled={mode === 'view'} enableDamping={true} />
+        <UnfoldingCube mode={mode} color={color} tool={tool} resetTrigger={resetCount} />
+        <OrbitControls enabled={mode === 'view' || mode === 'open'} enableDamping={true} />
       </Canvas>
     </div>
   )
